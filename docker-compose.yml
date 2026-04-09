@@ -8,7 +8,7 @@ services:
       target: build
       # Uses the "build" stage which still has devDependencies (sequelize-cli).
       # The runtime stage prunes them out.
-    container_name: zorvyn_migrate
+    container_name: setup_doc_migrate
     env_file: .env
 
     command: npx sequelize-cli db:migrate
@@ -34,7 +34,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: zorvyn_app
+    container_name: setup_doc_app
     env_file: .env
     restart: unless-stopped
 
@@ -93,7 +93,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════
   nginx:
     image: nginx:1.27-alpine
-    container_name: zorvyn_nginx
+    container_name: setup_doc_nginx
     restart: unless-stopped
 
     ports:
@@ -126,7 +126,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════
   certbot:
     image: certbot/certbot:v2.11.0
-    container_name: zorvyn_certbot
+    container_name: setup_doc_certbot
 
     volumes:
       - certbot_certs:/etc/letsencrypt
