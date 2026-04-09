@@ -1,0 +1,49 @@
+# ── Node.js ──────────────────────────────────────────────────
+# NEVER copy local node_modules into the container.
+# Your local modules are compiled for your OS (macOS/Windows).
+# The container runs Linux. bcrypt would crash with "invalid ELF header".
+# The Dockerfile runs npm ci inside the container, compiling for Linux.
+node_modules/
+
+# ── Secrets — CRITICAL ───────────────────────────────────────
+# If .env gets baked into an image layer, it's readable by anyone
+# with docker pull access. Secrets are injected at RUNTIME via
+# docker-compose env_file, never built into the image.
+.env
+.env.*
+!.env.example
+
+# ── Git ──────────────────────────────────────────────────────
+.git
+.gitignore
+
+# ── Editor/IDE ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+
+# ── Not needed in production image ───────────────────────────
+tests/
+postman/
+documentation/
+coverage/
+*.md
+!package.json
+
+# ── Docker files (don't copy into themselves) ────────────────
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# ── CI/CD ────────────────────────────────────────────────────
+.github/
+.claude/

@@ -43,7 +43,7 @@ Internet
    v
 [ EC2 Instance (Ubuntu 24.04) ]
    |
-   +-- UFW Firewall (ports 22/2222, 80, 443)
+   +-- UFW Firewall (ports 22, 80, 443)
    |
    +-- Docker Engine
        |
@@ -51,11 +51,11 @@ Internet
        |       |
        |       | (Docker internal network)
        |       v
-       +-- [ App Container ] -- port 3000 (internal only)
+       +-- [ App Container ] -- port 8080 (internal only)
        |       |
-       |       | (Docker internal network)
+       |       | (outbound to external DB)
        |       v
-       +-- [ PostgreSQL Container ] -- port 5432 (internal only)
+       +-- [ External PostgreSQL ] -- Neon / RDS / Supabase (managed)
        |
        +-- [ Certbot Container ] -- SSL certificate management
 ```
@@ -66,8 +66,7 @@ Internet
 | ---------------------- | ------------------------------------------------------------------- |
 | Docker instead of PM2  | Reproducible builds, isolated dependencies, easy rollback           |
 | NGINX in front of Node | SSL termination, request buffering, rate limiting at network edge   |
-| PostgreSQL in Docker   | Same compose file manages everything, volume persistence            |
-| Two Docker networks    | App/DB on internal network (no internet access), NGINX bridges both |
+| External PostgreSQL    | Managed backups, scaling, connection pooling — no ops overhead      |
 | No ECS                 | Cost savings — single EC2 instance is sufficient for most startups  |
 
 ### What changed from your old PM2 setup
@@ -126,7 +125,7 @@ ssh-keygen -t ed25519 -C "your@email.com"
 | HTTP  | 80   | 0.0.0.0/0            | Let's Encrypt ACME challenge + HTTPS redirect |
 | HTTPS | 443  | 0.0.0.0/0            | All client traffic                            |
 
-**Do NOT open port 3000.** Node.js is only reachable via NGINX inside Docker.
+**Do NOT open port 8080.** Node.js is only reachable via NGINX inside Docker.
 
 ### 3.2 Assign an Elastic IP
 
@@ -158,60 +157,63 @@ sudo apt update && sudo apt upgrade -y
 
 > Do this BEFORE anything else. An exposed SSH is the #1 attack vector.
 
-### 4.1 Change SSH Port + Disable Root Login + Key-Only Auth
+### 4.1 Hardening: Disable Root Login + Key-Only Auth
+
+**NOTE:** AWS EC2 instances have EC2 Instance Connect which overrides custom SSH ports. **Keep SSH on port 22** — security comes from restricting access at the AWS Security Group level (IP-only), not port obscurity.
+
+Run these sed commands to harden SSH:
 
 ```bash
-sudo nano /etc/ssh/sshd_config
+# Disable root login — if compromised, game over
+sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config
+
+# Disable password auth — key-only authentication
+sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+
+# Enable pubkey auth
+sudo sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+# Disable challenge-response auth
+sudo sed -i 's/#ChallengeResponseAuthentication yes/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config
+
+# Add security settings
+echo "MaxAuthTries 3" | sudo tee -a /etc/ssh/sshd_config
+echo "ClientAliveInterval 300" | sudo tee -a /etc/ssh/sshd_config
+echo "ClientAliveCountMax 1" | sudo tee -a /etc/ssh/sshd_config
+echo "LogLevel VERBOSE" | sudo tee -a /etc/ssh/sshd_config
 ```
 
-Find and change these lines:
-
-```
-# Use non-standard port — stops 99% of automated bot scans on port 22
-Port 2222
-
-# Never allow root login — if compromised, game over
-PermitRootLogin no
-
-# Key-only auth — passwords are vulnerable to brute force
-PasswordAuthentication no
-PubkeyAuthentication yes
-
-# Disable unused auth methods
-ChallengeResponseAuthentication no
-KbdInteractiveAuthentication no
-
-# Only allow your user
-AllowUsers ubuntu
-
-# Disconnect idle sessions after 5 minutes
-ClientAliveInterval 300
-ClientAliveCountMax 1
-
-# Max login attempts per connection
-MaxAuthTries 3
-```
-
-**IMPORTANT:** Before restarting SSH, open port 2222 in your security group and UFW:
+### 4.2 Test and Restart SSH
 
 ```bash
-# Add the new port BEFORE restarting SSH (or you'll lock yourself out)
-sudo ufw allow 2222/tcp
-
-# Test config
+# Test config for syntax errors (silence = success)
 sudo sshd -t
 
-# Restart SSH
-sudo systemctl restart sshd
+# Restart SSH service
+sudo systemctl restart ssh
+
+# Verify it's running
+sudo systemctl status ssh
 ```
 
-**Test in a NEW terminal** (keep the old one open as backup):
+You should see: `Active: active (running)`
 
-```bash
-ssh -i your-key.pem -p 2222 ubuntu@your-elastic-ip
-```
+### 4.3 Restrict SSH Access at AWS Security Group Level
 
-Once confirmed working, update your security group: change SSH port from 22 to 2222, remove port 22.
+Since we're keeping port 22, restrict access to **your IP only**:
+
+1. Go to **AWS Console → EC2 → Security Groups**
+2. Select your security group
+3. Edit **Inbound rules**
+4. Find the SSH rule (port 22)
+5. Change **Source** from `0.0.0.0/0` to **My IP**
+6. Save
+
+This approach is **better than port obscurity** because:
+
+- Port 22 is what AWS EC2 Instance Connect expects
+- IP restriction is a real security boundary
+- Reduces operational complexity
 
 ### 4.2 Install fail2ban
 
@@ -232,7 +234,7 @@ ignoreip = 127.0.0.1/8
 
 [sshd]
 enabled  = true
-port     = 2222      # Must match your SSH port
+port     = 22        # Keep port 22 (EC2 Instance Connect requirement)
 logpath  = /var/log/auth.log
 maxretry = 3         # SSH gets stricter — 3 failures
 bantime  = 86400     # 24 hour ban for SSH brute force
@@ -252,7 +254,7 @@ sudo fail2ban-client status sshd
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 
-sudo ufw allow 2222/tcp comment 'SSH'
+sudo ufw allow 22/tcp comment 'SSH'
 sudo ufw allow 80/tcp comment 'HTTP'
 sudo ufw allow 443/tcp comment 'HTTPS'
 
@@ -329,7 +331,8 @@ COPY package.json package-lock.json ./
 
 # npm ci = clean install from lockfile (deterministic, no surprises)
 # All deps including devDependencies (needed for sequelize-cli in migrations)
-RUN npm ci
+# BuildKit cache mount: reuses npm cache across builds (~30% faster rebuilds)
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # =============================================================================
 # STAGE 2: build — Copy source, then prune dev dependencies
@@ -353,7 +356,7 @@ FROM node:24-bookworm-slim AS runtime
 
 # Express disables stack traces, Sequelize disables SQL logging
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=8080
 
 WORKDIR /app
 
@@ -374,9 +377,9 @@ USER node
 # Docker probes /health every 30s. wget is available in bookworm-slim.
 # This enables depends_on: condition: service_healthy in docker-compose.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-EXPOSE 3000
+EXPOSE 8080
 
 # ── SIGNAL HANDLING ──────────────────────────────────────────────────
 # MUST use exec form (JSON array), NOT shell form (string).
@@ -467,56 +470,10 @@ docker-compose*.yml
 
 Create `docker-compose.yml` in your project root.
 
+This setup uses an **external managed database** (Neon, RDS, Supabase, etc.) instead of a local PostgreSQL container. Benefits: managed backups, connection pooling, automatic scaling, no volume management.
+
 ```yaml
 services:
-  # ═══════════════════════════════════════════════════════════════════════
-  # POSTGRES — Database with persistent storage
-  # ═══════════════════════════════════════════════════════════════════════
-  postgres:
-    image: postgres:16-bookworm
-    # WHY pin to 16? "postgres:latest" could silently upgrade from PG 16
-    # to PG 17 on next pull — requiring pg_upgrade. Pin major version.
-    container_name: zorvyn_postgres
-    restart: unless-stopped
-    # unless-stopped: restarts on crash/reboot but NOT after manual stop.
-
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-zorvyn}
-      POSTGRES_USER: ${POSTGRES_USER:-zorvyn_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      # :? syntax = fail with error if not set. Catches missing secrets early.
-
-    volumes:
-      # Named volume = data survives container removal.
-      # WARNING: `docker compose down -v` DELETES this volume. Never use -v in prod.
-      - pgdata:/var/lib/postgresql/data
-
-    healthcheck:
-      # pg_isready verifies Postgres is actually accepting connections,
-      # not just that the process is running.
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-zorvyn_user} -d ${POSTGRES_DB:-zorvyn}']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-    networks:
-      - backend
-      # Postgres is ONLY on backend network — never reachable from internet.
-
-    logging:
-      driver: 'json-file'
-      options:
-        max-size: '10m' # Rotate at 10MB
-        max-file: '3' # Keep 3 files = 30MB max
-
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-        # On t3.small (2GB RAM): 1GB for Postgres, 512MB for app, rest for OS
-
   # ═══════════════════════════════════════════════════════════════════════
   # MIGRATE — One-shot container that runs DB migrations then exits
   # ═══════════════════════════════════════════════════════════════════════
@@ -530,19 +487,14 @@ services:
     env_file: .env
 
     command: npx sequelize-cli db:migrate
-    # Runs pending migrations and exits.
-
-    depends_on:
-      postgres:
-        condition: service_healthy
-        # Waits for Postgres healthcheck to pass before running migrations.
-        # Without this: migration starts, Postgres is still initializing, crash.
+    # Runs pending migrations against the external database and exits.
 
     restart: 'no'
     # One-shot: run once, exit. If migration fails, don't loop — inspect logs.
 
     networks:
-      - backend
+      - appnet
+      # Needs internet access to reach external database (Neon/RDS).
 
     logging:
       driver: 'json-file'
@@ -551,7 +503,7 @@ services:
         max-file: '2'
 
   # ═══════════════════════════════════════════════════════════════════════
-  # APP — Zorvyn API server
+  # APP — API server
   # ═══════════════════════════════════════════════════════════════════════
   app:
     build:
@@ -561,15 +513,22 @@ services:
     env_file: .env
     restart: unless-stopped
 
-    # Do NOT expose port 3000 to the host!
-    # The app is only reachable via NGINX on the internal Docker network.
-    # Exposing 3000 = raw HTTP traffic bypasses NGINX, bypasses TLS.
+    # Read-only root filesystem — if app is compromised, attacker can't write to disk.
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    # Drop all Linux capabilities, add back none — Node.js doesn't need any.
+    security_opt:
+      - no-new-privileges:true
+
+    # Do NOT expose port 8080 to the host!
+    # The app is only reachable via NGINX on the Docker network.
+    # Exposing 8080 = raw HTTP traffic bypasses NGINX, bypasses TLS.
     expose:
-      - '3000'
+      - '8080'
 
     depends_on:
-      postgres:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
         # service_completed_successfully: if migrations fail, app never starts.
@@ -577,20 +536,22 @@ services:
 
     healthcheck:
       test:
-        ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1']
+        ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1']
       interval: 30s
       timeout: 10s
       start_period: 30s
       retries: 3
 
     networks:
-      - backend
+      - appnet
+      # Needs internet access to reach external database (Neon/RDS).
 
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '1.0'
+          memory: 1G
+        # Without local Postgres, app gets more resources.
 
     # Docker sends SIGTERM, waits this long, then SIGKILL.
     # Your server.js has a 10s forced-exit timeout. Set this slightly above.
@@ -627,8 +588,7 @@ services:
         condition: service_healthy
 
     networks:
-      - backend # Can reach app container
-      - frontend # Accepts internet traffic
+      - appnet
 
     logging:
       driver: 'json-file'
@@ -640,7 +600,7 @@ services:
   # CERTBOT — SSL certificate management
   # ═══════════════════════════════════════════════════════════════════════
   certbot:
-    image: certbot/certbot:latest
+    image: certbot/certbot:v2.11.0
     container_name: zorvyn_certbot
 
     volumes:
@@ -654,32 +614,23 @@ services:
     restart: unless-stopped
 
     networks:
-      - frontend
+      - appnet
 
 # ═══════════════════════════════════════════════════════════════════════════
 # NETWORKS
 # ═══════════════════════════════════════════════════════════════════════════
 networks:
-  backend:
+  appnet:
     driver: bridge
-    internal: true
-    # internal: true = NO internet access for containers on this network.
-    # App and Postgres cannot make outbound connections.
-    # This is a security boundary — even if app is compromised,
-    # attacker can't exfiltrate data to external servers.
-
-  frontend:
-    driver: bridge
-    # NGINX and certbot need internet access for ACME challenges.
+    # Single network — all containers need internet access:
+    # App connects to external database (Neon/RDS).
+    # NGINX and certbot need internet for ACME challenges.
+    # Security is handled by the external DB's own firewall + SSL.
 
 # ═══════════════════════════════════════════════════════════════════════════
 # VOLUMES
 # ═══════════════════════════════════════════════════════════════════════════
 volumes:
-  pgdata:
-    # PostgreSQL data. Survives `docker compose down`.
-    # DESTROYED by `docker compose down -v`. Never use -v in production.
-
   certbot_certs:
     # Let's Encrypt certificates
 
@@ -687,20 +638,15 @@ volumes:
     # ACME HTTP-01 challenge files
 ```
 
-### .env file for Docker
+### .env file for Docker (External Database)
 
-Update your `.env` to work with Docker networking:
+Your `.env` connects to a managed database — no local Postgres credentials needed.
 
 ```bash
-# Database — use "postgres" (the service name), NOT "localhost"
-# Inside Docker, "localhost" is the container itself — no Postgres there.
-# Docker DNS resolves "postgres" to the postgres container's IP.
-DATABASE_URL="postgresql://zorvyn_user:YOUR_STRONG_PASSWORD@postgres:5432/zorvyn"
-
-# Postgres container credentials (must match DATABASE_URL)
-POSTGRES_DB=zorvyn
-POSTGRES_USER=zorvyn_user
-POSTGRES_PASSWORD=YOUR_STRONG_PASSWORD
+# Database — external managed PostgreSQL (Neon, RDS, Supabase, etc.)
+# The connection string comes from your database provider's dashboard.
+# Always use ?sslmode=require for external databases.
+DATABASE_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
 
 # JWT secrets — generate with: openssl rand -base64 64
 JWT_SECRET="paste-64-char-random-string-here"
@@ -709,7 +655,7 @@ JWT_ACCESS_EXPIRES_IN="15m"
 JWT_REFRESH_EXPIRES_IN="7d"
 
 # Server
-PORT=3000
+PORT=8080
 NODE_ENV=production
 
 # CORS — your actual domain
@@ -821,7 +767,7 @@ server {
 
     # Proxy to app (HTTP for now, switch to HTTPS redirect after certs)
     location / {
-        proxy_pass http://app:3000;
+        proxy_pass http://app:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -841,7 +787,7 @@ After obtaining certificates, replace `nginx/conf.d/default.conf` with:
 ```nginx
 # ── Upstream definition ──────────────────────────────────────────────
 upstream zorvyn_app {
-    server app:3000;
+    server app:8080;
     # "app" resolves to the app container via Docker DNS.
 
     # Reuse connections to Node.js — avoids TCP handshake per request.
@@ -1181,7 +1127,7 @@ set -euo pipefail
 APP_DIR="/opt/zorvyn"
 LOG_FILE="/var/log/zorvyn/deploy.log"
 ROLLBACK_FILE="$APP_DIR/.previous_image_tag"
-HEALTH_URL="http://127.0.0.1:3000/health"
+HEALTH_URL="http://127.0.0.1:8080/health"
 IMAGE_TAG="${1:-latest}"
 
 log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [$1] $2" | tee -a "$LOG_FILE"; }
@@ -1282,12 +1228,13 @@ echo "  2. Test:   docker compose exec nginx nginx -t"
 echo "  3. Reload: docker compose exec nginx nginx -s reload"
 ```
 
-### 13.4 `scripts/backup.sh` — Database Backup
+### 13.4 `scripts/backup.sh` — Database Backup (External DB)
 
 ```bash
 #!/usr/bin/env bash
 # Usage: bash scripts/backup.sh [--s3]
 # Schedule: 0 2 * * * /opt/zorvyn/scripts/backup.sh >> /var/log/zorvyn/backup.log 2>&1
+# NOTE: Requires pg_dump installed on host: sudo apt install -y postgresql-client
 set -euo pipefail
 
 APP_DIR="/opt/zorvyn"
@@ -1299,16 +1246,13 @@ BACKUP_FILE="$BACKUP_DIR/zorvyn_${TIMESTAMP}.sql.gz"
 
 mkdir -p "$BACKUP_DIR"
 
-# Read credentials from .env
-POSTGRES_USER=$(grep '^POSTGRES_USER=' "$APP_DIR/.env" | cut -d= -f2)
-POSTGRES_DB=$(grep '^POSTGRES_DB=' "$APP_DIR/.env" | cut -d= -f2)
+# Read DATABASE_URL from .env
+DATABASE_URL=$(grep '^DATABASE_URL=' "$APP_DIR/.env" | cut -d'"' -f2)
 
 echo "[$(date -u)] Starting backup..."
 
-# pg_dump runs inside the postgres container
-docker exec zorvyn_postgres \
-  pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-password \
-  | gzip > "$BACKUP_FILE"
+# pg_dump using the external DATABASE_URL directly
+pg_dump "$DATABASE_URL" | gzip > "$BACKUP_FILE"
 
 BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
 echo "[$(date -u)] Backup created: $BACKUP_FILE ($BACKUP_SIZE)"
@@ -1539,7 +1483,7 @@ shell:
 	docker exec -it zorvyn_app /bin/sh
 
 db-shell:
-	$(COMPOSE) exec postgres psql -U zorvyn_user -d zorvyn
+	@echo "Using external DB — connect via: psql \$DATABASE_URL"
 
 .PHONY: migrate seed
 migrate:
@@ -1553,7 +1497,7 @@ backup:
 	bash scripts/backup.sh
 
 health:
-	@curl -sf http://127.0.0.1:3000/health | jq . || echo "UNHEALTHY"
+	@curl -sf http://127.0.0.1:8080/health | jq . || echo "UNHEALTHY"
 
 status:
 	@echo "=== Containers ==="
@@ -1588,9 +1532,10 @@ clean:
 # List available backups
 ls -lh /opt/zorvyn/backups/
 
-# Restore (WARNING: drops and recreates the database)
+# Restore to external database (WARNING: overwrites data)
+# Requires pg_dump installed on host: sudo apt install -y postgresql-client
 gunzip -c /opt/zorvyn/backups/zorvyn_20260409_020000.sql.gz \
-  | docker exec -i zorvyn_postgres psql -U zorvyn_user -d zorvyn
+  | psql "$DATABASE_URL"
 ```
 
 ---
@@ -1771,12 +1716,12 @@ docker compose up --build
 | Shell form CMD              | Graceful shutdown never fires, deploys take 10s | `CMD ["node", "src/server.js"]`          |
 | Copying local node_modules  | "invalid ELF header" crash                      | `.dockerignore` excludes `node_modules/` |
 | .env baked into image       | Secrets visible in `docker history`             | `.dockerignore` excludes `.env`          |
-| DATABASE_URL with localhost | "connection refused" on startup                 | Use service name: `@postgres:5432`       |
+| DATABASE_URL with localhost | "connection refused" on startup                 | Use external DB URL with `?sslmode=require` |
 | No trust proxy              | Rate limiting broken, wrong IP in logs          | `app.set('trust proxy', 1)`              |
 | Alpine with bcrypt          | musl/glibc incompatibility crash                | Use `bookworm-slim`                      |
 | No resource limits          | One bad query kills entire instance             | `deploy.resources.limits`                |
-| `docker compose down -v`    | All database data deleted                       | Never use `-v` in production             |
-| Exposing port 3000          | Bypasses NGINX, no SSL                          | Only NGINX binds to host ports           |
+| `docker compose down -v`    | SSL cert volumes deleted                        | Never use `-v` in production             |
+| Exposing port 8080          | Bypasses NGINX, no SSL                          | Only NGINX binds to host ports           |
 | Running as root             | Container escape = host compromise              | `USER node` in Dockerfile                |
 
 ---
@@ -1827,8 +1772,8 @@ bash scripts/rollback.sh
 # Manual rollback to specific version
 bash scripts/rollback.sh main-abc1234
 
-# Restore database from backup
-gunzip -c backups/zorvyn_20260409.sql.gz | docker exec -i zorvyn_postgres psql -U zorvyn_user -d zorvyn
+# Restore database from backup (external DB)
+gunzip -c backups/zorvyn_20260409.sql.gz | psql "$DATABASE_URL"
 ```
 
 ### Project File Structure

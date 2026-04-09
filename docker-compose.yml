@@ -1,0 +1,163 @@
+services:
+  # ═══════════════════════════════════════════════════════════════════════
+  # MIGRATE — One-shot container that runs DB migrations then exits
+  # ═══════════════════════════════════════════════════════════════════════
+  migrate:
+    build:
+      context: .
+      target: build
+      # Uses the "build" stage which still has devDependencies (sequelize-cli).
+      # The runtime stage prunes them out.
+    container_name: zorvyn_migrate
+    env_file: .env
+
+    command: npx sequelize-cli db:migrate
+    # Runs pending migrations against the external database and exits.
+
+    restart: 'no'
+    # One-shot: run once, exit. If migration fails, don't loop — inspect logs.
+
+    networks:
+      - appnet
+      # Needs internet access to reach external database (Neon/RDS).
+
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '5m'
+        max-file: '2'
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # APP — API server
+  # ═══════════════════════════════════════════════════════════════════════
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zorvyn_app
+    env_file: .env
+    restart: unless-stopped
+
+    # Read-only root filesystem — if app is compromised, attacker can't write to disk.
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    # Drop all Linux capabilities, add back none — Node.js doesn't need any.
+    security_opt:
+      - no-new-privileges:true
+
+    # Do NOT expose port 8080 to the host!
+    # The app is only reachable via NGINX on the Docker network.
+    # Exposing 8080 = raw HTTP traffic bypasses NGINX, bypasses TLS.
+    expose:
+      - '8080'
+
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+        # service_completed_successfully: if migrations fail, app never starts.
+        # Prevents app from booting against a mismatched schema.
+
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1']
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+    networks:
+      - appnet
+      # Needs internet access to reach external database (Neon/RDS).
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        # Without local Postgres, app gets more resources.
+
+    # Docker sends SIGTERM, waits this long, then SIGKILL.
+    # Your server.js has a 10s forced-exit timeout. Set this slightly above.
+    stop_grace_period: 15s
+
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # NGINX — Reverse proxy + TLS termination
+  # ═══════════════════════════════════════════════════════════════════════
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: zorvyn_nginx
+    restart: unless-stopped
+
+    ports:
+      # ONLY nginx binds to host ports.
+      - '80:80'
+      - '443:443'
+
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      # :ro = read-only mount. Container can't modify its own config.
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+
+    depends_on:
+      app:
+        condition: service_healthy
+
+    networks:
+      - appnet
+
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # CERTBOT — SSL certificate management
+  # ═══════════════════════════════════════════════════════════════════════
+  certbot:
+    image: certbot/certbot:v2.11.0
+    container_name: zorvyn_certbot
+
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+
+    # Checks renewal every 12 hours. certbot renew is a no-op if certs
+    # have > 30 days remaining, so frequent checks are safe.
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done'"
+
+    restart: unless-stopped
+
+    networks:
+      - appnet
+
+# ═══════════════════════════════════════════════════════════════════════════
+# NETWORKS
+# ═══════════════════════════════════════════════════════════════════════════
+networks:
+  appnet:
+    driver: bridge
+    # Single network — all containers need internet access:
+    # App connects to external database (Neon/RDS).
+    # NGINX and certbot need internet for ACME challenges.
+    # Security is handled by the external DB's own firewall + SSL.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# VOLUMES
+# ═══════════════════════════════════════════════════════════════════════════
+volumes:
+  certbot_certs:
+    # Let's Encrypt certificates
+
+  certbot_www:
+    # ACME HTTP-01 challenge files
