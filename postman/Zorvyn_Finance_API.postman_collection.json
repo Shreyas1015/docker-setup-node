@@ -1,0 +1,1226 @@
+{
+  "info": {
+    "name": "Zorvyn Finance Dashboard API",
+    "description": "Complete API collection for Zorvyn Finance Dashboard Backend (v1).\n\n**Setup:**\n1. Run \"Login Admin\" first — it auto-sets the accessToken\n2. All protected requests use {{accessToken}} automatically\n3. Refresh tokens are sent as httpOnly cookies automatically\n4. Switch roles by running Login Analyst or Login Viewer\n\n**Seed credentials:**\n- admin@zorvyn.com / Password1\n- analyst@zorvyn.com / Password1\n- viewer@zorvyn.com / Password1\n\n**Auth model:** Access token (15 min, Bearer header) + Refresh token (7 days, httpOnly cookie).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "createdUserId",
+      "value": ""
+    },
+    {
+      "key": "createdRecordId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has status ok', () => {",
+                  "    pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Verify server is running. No auth required."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login Admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.success && res.data.accessToken) {",
+                  "    pm.collectionVariables.set('accessToken', res.data.accessToken);",
+                  "    console.log('Access token set for role:', res.data.user.role);",
+                  "}",
+                  "",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has accessToken', () => pm.expect(res.data.accessToken).to.be.a('string'));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "pm.test('Has meta.timestamp', () => pm.expect(res.meta.timestamp).to.be.a('string'));",
+                  "pm.test('Role is ADMIN', () => pm.expect(res.data.user.role).to.eql('ADMIN'));",
+                  "pm.test('User ID is UUID', () => pm.expect(res.data.user.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test('Set-Cookie contains refreshToken', () => {",
+                  "    const cookies = pm.response.headers.get('Set-Cookie');",
+                  "    pm.expect(cookies).to.include('refreshToken');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@zorvyn.com\",\n  \"password\": \"Password1\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "Login as ADMIN. Auto-sets {{accessToken}}. Refresh token set as httpOnly cookie."
+          }
+        },
+        {
+          "name": "Login Analyst",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.success && res.data.accessToken) {",
+                  "    pm.collectionVariables.set('accessToken', res.data.accessToken);",
+                  "    console.log('Access token set for role:', res.data.user.role);",
+                  "}",
+                  "",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "pm.test('Role is ANALYST', () => pm.expect(res.data.user.role).to.eql('ANALYST'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"analyst@zorvyn.com\",\n  \"password\": \"Password1\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "Login as ANALYST. Auto-sets {{accessToken}}. Can read records + dashboard, cannot write."
+          }
+        },
+        {
+          "name": "Login Viewer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.success && res.data.accessToken) {",
+                  "    pm.collectionVariables.set('accessToken', res.data.accessToken);",
+                  "    console.log('Access token set for role:', res.data.user.role);",
+                  "}",
+                  "",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "pm.test('Role is VIEWER', () => pm.expect(res.data.user.role).to.eql('VIEWER'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"viewer@zorvyn.com\",\n  \"password\": \"Password1\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "Login as VIEWER. Auto-sets {{accessToken}}. Can only access dashboard endpoints."
+          }
+        },
+        {
+          "name": "Register New User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const res = pm.response.json();",
+                  "pm.test('Has accessToken', () => pm.expect(res.data.accessToken).to.be.a('string'));",
+                  "pm.test('Default role VIEWER', () => pm.expect(res.data.user.role).to.eql('VIEWER'));",
+                  "pm.test('No passwordHash', () => pm.expect(res.data.user.passwordHash).to.be.undefined);",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "pm.test('User ID is UUID', () => pm.expect(res.data.user.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"newuser@example.com\",\n  \"password\": \"SecurePass1\",\n  \"name\": \"John Doe\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "Register a new user. Default role: VIEWER. Password must have min 8 chars, uppercase, lowercase, number."
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has new accessToken', () => pm.expect(res.data.accessToken).to.be.a('string'));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "",
+                  "if (res.success && res.data.accessToken) {",
+                  "    pm.collectionVariables.set('accessToken', res.data.accessToken);",
+                  "    console.log('Access token refreshed');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            },
+            "description": "Exchange refresh token (httpOnly cookie) for a new access token + rotated refresh token. Uses refresh token rotation with family-based compromise detection."
+          }
+        },
+        {
+          "name": "Get Current User (Me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has user email', () => pm.expect(res.data.email).to.be.a('string'));",
+                  "pm.test('Has user role', () => pm.expect(res.data.role).to.be.a('string'));",
+                  "pm.test('No passwordHash', () => pm.expect(res.data.passwordHash).to.be.undefined);",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "me"]
+            },
+            "description": "Get the currently authenticated user's profile."
+          }
+        },
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "pm.collectionVariables.set('accessToken', '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "logout"]
+            },
+            "description": "Revoke refresh token and clear cookie. Logs TOKEN_REVOKED security event."
+          }
+        },
+        {
+          "name": "Login — Wrong Password (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error.code', () => {",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.error.code).to.be.a('string');",
+                  "});",
+                  "pm.test('Generic error message', () => {",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.error.message).to.eql('Invalid credentials');",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@zorvyn.com\",\n  \"password\": \"wrongpassword\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "Verify generic error message — doesn't reveal if email exists. Logs AUTH_FAILURE security event. After 5 failures, account is locked for 15 min."
+          }
+        },
+        {
+          "name": "Register — Validation Error (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error.code', () => {",
+                  "    pm.expect(pm.response.json().error.code).to.be.a('string');",
+                  "});",
+                  "pm.test('Has field-level details', () => {",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.error.details).to.be.an('array').that.is.not.empty;",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"not-an-email\",\n  \"password\": \"ab\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "register"]
+            },
+            "description": "Verify Zod validation returns field-level error details. Password must be min 8 chars with uppercase, lowercase, and number."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth Flow",
+      "description": "End-to-end authentication flow: Login → Refresh → Me → Logout. Run requests in order.",
+      "item": [
+        {
+          "name": "1. Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has accessToken', () => pm.expect(res.data.accessToken).to.be.a('string'));",
+                  "pm.test('Has meta', () => {",
+                  "    pm.expect(res.meta.requestId).to.be.a('string');",
+                  "    pm.expect(res.meta.timestamp).to.be.a('string');",
+                  "});",
+                  "pm.test('Set-Cookie contains refreshToken', () => {",
+                  "    const cookies = pm.response.headers.get('Set-Cookie');",
+                  "    pm.expect(cookies).to.include('refreshToken');",
+                  "});",
+                  "",
+                  "if (res.success && res.data.accessToken) {",
+                  "    pm.collectionVariables.set('accessToken', res.data.accessToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@zorvyn.com\",\n  \"password\": \"Password1\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "Step 1: Authenticate and receive access token (Bearer) + refresh token (httpOnly cookie)."
+          }
+        },
+        {
+          "name": "2. Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('New accessToken issued', () => pm.expect(res.data.accessToken).to.be.a('string'));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "pm.test('Refresh token rotated (new Set-Cookie)', () => {",
+                  "    const cookies = pm.response.headers.get('Set-Cookie');",
+                  "    pm.expect(cookies).to.include('refreshToken');",
+                  "});",
+                  "",
+                  "if (res.success && res.data.accessToken) {",
+                  "    pm.collectionVariables.set('accessToken', res.data.accessToken);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            },
+            "description": "Step 2: Use refresh token cookie to get a new access token. Old refresh token is invalidated (rotation)."
+          }
+        },
+        {
+          "name": "3. Get Me",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has user profile', () => {",
+                  "    pm.expect(res.data.email).to.be.a('string');",
+                  "    pm.expect(res.data.role).to.be.a('string');",
+                  "});",
+                  "pm.test('User ID is UUID', () => pm.expect(res.data.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "me"]
+            },
+            "description": "Step 3: Verify the refreshed access token works by fetching current user profile."
+          }
+        },
+        {
+          "name": "4. Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "pm.collectionVariables.set('accessToken', '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "logout"]
+            },
+            "description": "Step 4: Revoke refresh token, clear cookie, log TOKEN_REVOKED event."
+          }
+        },
+        {
+          "name": "5. Refresh After Logout (Should Fail)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error.code', () => pm.expect(pm.response.json().error.code).to.be.a('string'));",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "refresh"]
+            },
+            "description": "Step 5: Verify refresh token was revoked — should return 401."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users (Admin Only)",
+      "item": [
+        {
+          "name": "List Users",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const res = pm.response.json();",
+                  "pm.test('Has pagination', () => pm.expect(res.pagination).to.have.property('total'));",
+                  "pm.test('Data is array', () => pm.expect(res.data).to.be.an('array'));",
+                  "pm.test('No passwordHash exposed', () => {",
+                  "    res.data.forEach(u => pm.expect(u.passwordHash).to.be.undefined);",
+                  "});",
+                  "pm.test('IDs are UUIDs', () => {",
+                  "    res.data.forEach(u => pm.expect(u.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get User by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has user data', () => {",
+                  "    const res = pm.response.json();",
+                  "    pm.expect(res.data).to.have.property('email');",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{createdUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{createdUserId}}"]
+            },
+            "description": "Get user by UUID. Run 'Create User' first to populate {{createdUserId}}."
+          }
+        },
+        {
+          "name": "Create User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const res = pm.response.json();",
+                  "pm.test('Role set correctly', () => pm.expect(res.data.role).to.eql('ANALYST'));",
+                  "pm.test('ID is UUID', () => pm.expect(res.data.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "if (res.data.id) pm.collectionVariables.set('createdUserId', res.data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"created-user@example.com\",\n  \"password\": \"SecurePass1\",\n  \"name\": \"Created User\",\n  \"role\": \"ANALYST\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"]
+            }
+          }
+        },
+        {
+          "name": "Update User (Change Status)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Status changed', () => {",
+                  "    pm.expect(pm.response.json().data.status).to.eql('INACTIVE');",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"INACTIVE\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{createdUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{createdUserId}}"]
+            },
+            "description": "Deactivate user by UUID. Inactive users cannot log in."
+          }
+        },
+        {
+          "name": "Delete User (Soft Delete)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Message confirms deletion', () => {",
+                  "    pm.expect(pm.response.json().message).to.include('deleted');",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{{createdUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "{{createdUserId}}"]
+            },
+            "description": "Soft deletes user — sets deleted_at. User disappears from listings."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Financial Records",
+      "item": [
+        {
+          "name": "List Records (Default)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const res = pm.response.json();",
+                  "pm.test('Has pagination', () => pm.expect(res.pagination.total).to.be.above(0));",
+                  "pm.test('Data is array', () => pm.expect(res.data).to.be.an('array'));",
+                  "pm.test('IDs are UUIDs', () => {",
+                  "    res.data.forEach(r => pm.expect(r.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records"]
+            }
+          }
+        },
+        {
+          "name": "List Records — Filter by Type",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records?type=INCOME&sortBy=amount&order=desc",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records"],
+              "query": [
+                { "key": "type", "value": "INCOME" },
+                { "key": "sortBy", "value": "amount" },
+                { "key": "order", "value": "desc" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Records — Filter by Date Range",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records?startDate=2026-02-01&endDate=2026-02-28&limit=5",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records"],
+              "query": [
+                { "key": "startDate", "value": "2026-02-01" },
+                { "key": "endDate", "value": "2026-02-28" },
+                { "key": "limit", "value": "5" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Records — Filter by Category",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records?category=Salary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records"],
+              "query": [{ "key": "category", "value": "Salary" }]
+            }
+          }
+        },
+        {
+          "name": "Get Record by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has creator info', () => {",
+                  "    pm.expect(pm.response.json().data.creator).to.have.property('name');",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records/{{createdRecordId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records", "{{createdRecordId}}"]
+            },
+            "description": "Get record by UUID. Run 'Create Record' first to populate {{createdRecordId}}."
+          }
+        },
+        {
+          "name": "Create Record",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const res = pm.response.json();",
+                  "pm.test('Amount correct', () => pm.expect(res.data.amount).to.eql(250000));",
+                  "pm.test('ID is UUID', () => pm.expect(res.data.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test('Has meta.requestId', () => pm.expect(res.meta.requestId).to.be.a('string'));",
+                  "if (res.data.id) pm.collectionVariables.set('createdRecordId', res.data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 250000,\n  \"type\": \"EXPENSE\",\n  \"category\": \"Equipment\",\n  \"date\": \"2026-04-01\",\n  \"description\": \"New monitor for home office\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records"]
+            },
+            "description": "Amount is in cents. 250000 = $2,500.00. Requires ADMIN role. Ownership tracked via createdBy."
+          }
+        },
+        {
+          "name": "Update Record",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Amount updated', () => {",
+                  "    pm.expect(pm.response.json().data.amount).to.eql(275000);",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 275000,\n  \"category\": \"Office Equipment\",\n  \"description\": \"New monitor + keyboard\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records/{{createdRecordId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records", "{{createdRecordId}}"]
+            },
+            "description": "Partial update — only send fields you want to change. Ownership check enforced."
+          }
+        },
+        {
+          "name": "Delete Record (Soft Delete)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records/{{createdRecordId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records", "{{createdRecordId}}"]
+            },
+            "description": "Soft delete — sets deleted_at. Record excluded from all queries and dashboard. Ownership check enforced."
+          }
+        },
+        {
+          "name": "Create Record — Validation Error (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Has error.code', () => pm.expect(pm.response.json().error.code).to.be.a('string'));",
+                  "pm.test('Has field errors', () => {",
+                  "    pm.expect(pm.response.json().error.details).to.be.an('array').that.is.not.empty;",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": -100,\n  \"type\": \"INVALID\",\n  \"category\": \"\",\n  \"date\": \"not-a-date\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records"]
+            },
+            "description": "Demonstrates Zod validation: negative amount, invalid type enum, empty category, bad date format."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Summary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Has totalIncome', () => pm.expect(d.totalIncome).to.be.a('number'));",
+                  "pm.test('Has totalExpenses', () => pm.expect(d.totalExpenses).to.be.a('number'));",
+                  "pm.test('Net = Income - Expenses', () => {",
+                  "    pm.expect(d.netBalance).to.eql(d.totalIncome - d.totalExpenses);",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/dashboard/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "dashboard", "summary"]
+            }
+          }
+        },
+        {
+          "name": "Summary — With Date Filter",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/dashboard/summary?startDate=2026-01-01&endDate=2026-01-31",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "dashboard", "summary"],
+              "query": [
+                { "key": "startDate", "value": "2026-01-01" },
+                { "key": "endDate", "value": "2026-01-31" }
+              ]
+            },
+            "description": "Summary filtered to January 2026 only."
+          }
+        },
+        {
+          "name": "Category Breakdown",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has categories', () => {",
+                  "    const data = pm.response.json().data;",
+                  "    pm.expect(data).to.be.an('array').that.is.not.empty;",
+                  "    pm.expect(data[0]).to.have.property('category');",
+                  "    pm.expect(data[0]).to.have.property('total');",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/dashboard/category-breakdown",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "dashboard", "category-breakdown"]
+            }
+          }
+        },
+        {
+          "name": "Monthly Trends",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has monthly data', () => {",
+                  "    const data = pm.response.json().data;",
+                  "    pm.expect(data).to.be.an('array');",
+                  "    pm.expect(data[0]).to.have.property('month');",
+                  "    pm.expect(data[0]).to.have.property('income');",
+                  "    pm.expect(data[0]).to.have.property('expense');",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/dashboard/trends",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "dashboard", "trends"]
+            }
+          }
+        },
+        {
+          "name": "Recent Activity",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns max limit items', () => {",
+                  "    pm.expect(pm.response.json().data.length).to.be.at.most(5);",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/dashboard/recent?limit=5",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "dashboard", "recent"],
+              "query": [{ "key": "limit", "value": "5" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "RBAC Tests",
+      "item": [
+        {
+          "name": "No Token → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Has error.code', () => pm.expect(pm.response.json().error.code).to.be.a('string'));",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"]
+            },
+            "description": "No Authorization header → 401 Unauthorized."
+          }
+        },
+        {
+          "name": "Viewer → Users (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Has error.code', () => pm.expect(pm.response.json().error.code).to.be.a('string'));",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users"]
+            },
+            "description": "Run 'Login Viewer' first, then this. Viewer cannot access user management. Logs PERMISSION_DENIED security event."
+          }
+        },
+        {
+          "name": "Viewer → Records (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Has error.code', () => pm.expect(pm.response.json().error.code).to.be.a('string'));",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records"]
+            },
+            "description": "Run 'Login Viewer' first. Viewer cannot read records."
+          }
+        },
+        {
+          "name": "Viewer → Dashboard (200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/dashboard/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "dashboard", "summary"]
+            },
+            "description": "Run 'Login Viewer' first. Viewer CAN access dashboard."
+          }
+        },
+        {
+          "name": "Analyst → Create Record (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "pm.test('Has error.code', () => pm.expect(pm.response.json().error.code).to.be.a('string'));",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000,\n  \"type\": \"INCOME\",\n  \"category\": \"Test\",\n  \"date\": \"2026-01-01\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/records",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "records"]
+            },
+            "description": "Run 'Login Analyst' first. Analyst can read but NOT create records."
+          }
+        },
+        {
+          "name": "Unknown Route → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Has error.code', () => pm.expect(pm.response.json().error.code).to.be.a('string'));",
+                  "pm.test('Route not found message', () => {",
+                  "    pm.expect(pm.response.json().error.message).to.include('Route not found');",
+                  "});",
+                  "pm.test('Has meta.requestId', () => pm.expect(pm.response.json().meta.requestId).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/nonexistent",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "nonexistent"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
