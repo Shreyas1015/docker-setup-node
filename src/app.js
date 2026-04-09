@@ -18,6 +18,18 @@ const dashboardRoutes = require('./routes/dashboard.routes');
 
 const app = express();
 
+// ─── TRUST PROXY ────────────────────────────────────
+// Trust exactly one proxy hop (NGINX).
+// This makes:
+//   - req.ip return the real client IP (from X-Forwarded-For)
+//   - req.secure return true for HTTPS (from X-Forwarded-Proto)
+//   - express-rate-limit see real IPs (not NGINX's container IP)
+//   - cookie secure flag work correctly
+//
+// WHY '1' not 'true': 'true' trusts the entire X-Forwarded-For chain,
+// allowing clients to spoof their IP. '1' trusts only the last hop (NGINX).
+app.set('trust proxy', 1);
+
 // ─── SECURITY HEADERS ───────────────────────────────
 app.use(
   helmet({
