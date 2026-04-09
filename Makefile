@@ -59,7 +59,7 @@ backup:
 	bash scripts/backup.sh
 
 health:
-	@curl -sf http://127.0.0.1:8080/health | jq . || echo "UNHEALTHY"
+	@curl -sf http://127.0.0.1/health | jq . || echo "UNHEALTHY"
 
 status:
 	@echo "=== Containers ==="
