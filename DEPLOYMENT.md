@@ -1610,7 +1610,7 @@ This adds ~200MB RAM overhead during deploys but achieves true zero-downtime. Se
 
 | Asset           | How Often       | Method                              |
 | --------------- | --------------- | ----------------------------------- |
-| PostgreSQL data | Daily           | `backup.sh` + S3                    |
+| PostgreSQL data | Managed         | Neon/RDS automatic backups          |
 | `.env` file     | On every change | Encrypted S3 or AWS Secrets Manager |
 | NGINX config    | In git          | Part of your repo                   |
 | Docker images   | Every push      | GHCR (automatic)                    |
@@ -1622,11 +1622,9 @@ This adds ~200MB RAM overhead during deploys but achieves true zero-downtime. Se
 | 1         | Launch new EC2 + Elastic IP     | 3 min          |
 | 2         | Run `setup.sh`                  | 5 min          |
 | 3         | Clone repo + restore `.env`     | 2 min          |
-| 4         | `docker compose up -d postgres` | 1 min          |
-| 5         | Restore database from backup    | 3-10 min       |
-| 6         | `docker compose up -d`          | 3 min          |
-| 7         | Verify health + update DNS      | 2 min          |
-| **Total** |                                 | **~20-25 min** |
+| 4         | `docker compose up -d`          | 3 min          |
+| 5         | Verify health + update DNS      | 2 min          |
+| **Total** |                                 | **~15 min**    |
 
 **Run a DR drill quarterly** on a fresh EC2 instance (not production). If it takes more than 30 minutes, automate what slowed you down.
 
@@ -1680,9 +1678,9 @@ app.set('trust proxy', 1);
 #    - Makefile           (adjust container names)
 #    - .github/workflows/ (copy directory)
 
-# 2. Update .env for Docker networking:
-#    - Change localhost to service name in DATABASE_URL
-#    - Add POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+# 2. Update .env for Docker:
+#    - Set DATABASE_URL to your external DB (Neon, RDS, Supabase)
+#    - Always use ?sslmode=require for external databases
 
 # 3. Add to your Express app:
 app.set('trust proxy', 1);
