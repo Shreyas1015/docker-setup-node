@@ -360,6 +360,10 @@ ENV PORT=8080
 
 WORKDIR /app
 
+# Install wget for healthcheck (not included in bookworm-slim)
+RUN apt-get update && apt-get install -y --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy pruned node_modules (production deps + compiled bcrypt)
 COPY --from=build /app/node_modules ./node_modules
 
