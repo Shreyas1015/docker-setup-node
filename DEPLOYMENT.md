@@ -1,7 +1,7 @@
 # Production Deployment Guide: Node.js on AWS EC2 with Docker
 
 > A complete, reusable tutorial for deploying any Node.js app on AWS EC2 using Docker.
-> Written for the Zorvyn stack (Express 5 + PostgreSQL + Sequelize) but applies to any Node.js project.
+> Written for an Express 5 + PostgreSQL (Neon) + Sequelize stack but applies to any Node.js project.
 
 ---
 
@@ -111,13 +111,13 @@ ssh-keygen -t ed25519 -C "your@email.com"
 
 | Setting       | Value                             | Why                                                |
 | ------------- | --------------------------------- | -------------------------------------------------- |
-| Name          | `zorvyn-production`               | Descriptive name                                   |
+| Name          | `setup-doc-production`            | Descriptive name                                   |
 | AMI           | Ubuntu 24.04 LTS                  | Long-term support, well-documented                 |
 | Instance type | `t3.small` (2 vCPU, 2GB RAM)      | Minimum for production. `t3.micro` for low traffic |
 | Key pair      | Create new or use existing `.pem` | SSH access                                         |
 | Storage       | 20GB gp3                          | Default 8GB fills fast with Docker images          |
 
-3. **Security Group** — create a new one called `zorvyn-sg`:
+3. **Security Group** — create a new one called `setup-doc-sg`:
 
 | Type  | Port | Source               | Why                                           |
 | ----- | ---- | -------------------- | --------------------------------------------- |
@@ -487,7 +487,7 @@ services:
       target: build
       # Uses the "build" stage which still has devDependencies (sequelize-cli).
       # The runtime stage prunes them out.
-    container_name: zorvyn_migrate
+    container_name: setup_doc_migrate
     env_file: .env
 
     command: npx sequelize-cli db:migrate
@@ -513,7 +513,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: zorvyn_app
+    container_name: setup_doc_app
     env_file: .env
     restart: unless-stopped
 
@@ -572,7 +572,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════
   nginx:
     image: nginx:1.27-alpine
-    container_name: zorvyn_nginx
+    container_name: setup_doc_nginx
     restart: unless-stopped
 
     ports:
@@ -605,7 +605,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════
   certbot:
     image: certbot/certbot:v2.11.0
-    container_name: zorvyn_certbot
+    container_name: setup_doc_certbot
 
     volumes:
       - certbot_certs:/etc/letsencrypt
@@ -790,7 +790,7 @@ After obtaining certificates, replace `nginx/conf.d/default.conf` with:
 
 ```nginx
 # ── Upstream definition ──────────────────────────────────────────────
-upstream zorvyn_app {
+upstream setup_doc_app {
     server app:8080;
     # "app" resolves to the app container via Docker DNS.
 
@@ -884,7 +884,7 @@ server {
     # ── Auth endpoints — tight rate limit ────────────────────────
     location /api/v1/auth/ {
         limit_req zone=api_auth burst=3 nodelay;
-        proxy_pass http://zorvyn_app;
+        proxy_pass http://setup_doc_app;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -897,7 +897,7 @@ server {
     # ── API endpoints — general rate limit ───────────────────────
     location /api/ {
         limit_req zone=api_general burst=20 nodelay;
-        proxy_pass http://zorvyn_app;
+        proxy_pass http://setup_doc_app;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -909,7 +909,7 @@ server {
 
     # ── Health check — no rate limit, no logging ─────────────────
     location /health {
-        proxy_pass http://zorvyn_app;
+        proxy_pass http://setup_doc_app;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         access_log off;    # Don't pollute logs with health check noise
@@ -953,21 +953,26 @@ docker compose up -d
 **Step 3: Verify NGINX is serving the ACME challenge path**
 
 ```bash
-curl -I http://yourdomain.com/.well-known/acme-challenge/test
+curl -I http://setup-doc.schbanglabs.com/.well-known/acme-challenge/test
 # Expect: 404 (file doesn't exist yet, but the location block is working)
 ```
 
 **Step 4: Run certbot to get initial certificates**
 
+> **NOTE:** `docker compose run` may hang due to the certbot entrypoint override.
+> Use `docker run` directly with the named volumes instead:
+
 ```bash
-docker compose run --rm certbot certonly \
+docker run --rm \
+  -v docker-setup-node_certbot_certs:/etc/letsencrypt \
+  -v docker-setup-node_certbot_www:/var/www/certbot \
+  certbot/certbot:v2.11.0 certonly \
   --webroot \
   --webroot-path=/var/www/certbot \
   --email your@email.com \
   --agree-tos \
   --no-eff-email \
-  -d yourdomain.com \
-  -d www.yourdomain.com
+  -d yourdomain.com
 ```
 
 On success, certs land in the `certbot_certs` volume at `/etc/letsencrypt/live/yourdomain.com/`.
@@ -992,10 +997,10 @@ docker compose exec nginx nginx -s reload
 
 ```bash
 # Quick check
-curl -vI https://yourdomain.com/health 2>&1 | grep -E "SSL|TLS|subject"
+curl -vI https://setup-doc.schbanglabs.com/health 2>&1 | grep -E "SSL|TLS|subject"
 
 # Check security headers
-curl -sI https://yourdomain.com/health | grep -i "strict\|x-frame\|x-content"
+curl -sI https://setup-doc.schbanglabs.com/health | grep -i "strict\|x-frame\|x-content"
 ```
 
 Test with online tools:
@@ -1013,7 +1018,7 @@ crontab -e
 
 ```
 # Reload NGINX twice daily to pick up renewed certificates
-0 3,15 * * * docker compose -f /path/to/docker-compose.yml exec nginx nginx -s reload 2>/dev/null
+0 3,15 * * * cd /opt/docker-setup-node && docker compose exec nginx nginx -s reload 2>/dev/null
 ```
 
 ---
@@ -1066,7 +1071,7 @@ Create a `scripts/` directory in your project root.
 # Run once on a fresh EC2: sudo bash scripts/setup.sh
 set -euo pipefail
 
-APP_DIR="/opt/zorvyn"
+APP_DIR="/opt/docker-setup-node"
 echo "=== First-time EC2 setup ==="
 
 # 1. System update
@@ -1091,7 +1096,7 @@ systemctl enable --now docker
 # 3. Create app directory
 echo "[3/5] Creating directories..."
 mkdir -p "$APP_DIR"/{scripts,backups,nginx/conf.d}
-mkdir -p /var/log/zorvyn
+mkdir -p /var/log/setup-doc
 
 # 4. Add user to docker group
 echo "[4/5] Configuring users..."
@@ -1099,8 +1104,8 @@ usermod -aG docker ubuntu 2>/dev/null || true
 
 # 5. Configure log rotation
 echo "[5/5] Setting up log rotation..."
-cat > /etc/logrotate.d/zorvyn <<'EOF'
-/var/log/zorvyn/*.log {
+cat > /etc/logrotate.d/setup-doc <<'EOF'
+/var/log/setup-doc/*.log {
     daily
     missingok
     rotate 14
@@ -1128,8 +1133,8 @@ echo "  4. Run ssl-init.sh for HTTPS"
 # Example: bash scripts/deploy.sh main-abc1234
 set -euo pipefail
 
-APP_DIR="/opt/zorvyn"
-LOG_FILE="/var/log/zorvyn/deploy.log"
+APP_DIR="/opt/docker-setup-node"
+LOG_FILE="/var/log/setup-doc/deploy.log"
 ROLLBACK_FILE="$APP_DIR/.previous_image_tag"
 HEALTH_URL="http://127.0.0.1:8080/health"
 IMAGE_TAG="${1:-latest}"
@@ -1212,15 +1217,18 @@ docker compose up -d nginx
 # Wait for NGINX to start
 sleep 3
 
-# Get the certificate
-docker compose run --rm certbot certonly \
+# Get the certificate (use docker run — docker compose run may hang
+# due to the certbot entrypoint override in docker-compose.yml)
+docker run --rm \
+  -v docker-setup-node_certbot_certs:/etc/letsencrypt \
+  -v docker-setup-node_certbot_www:/var/www/certbot \
+  certbot/certbot:v2.11.0 certonly \
   --webroot \
   --webroot-path=/var/www/certbot \
   --email "$EMAIL" \
   --agree-tos \
   --no-eff-email \
-  -d "$DOMAIN" \
-  -d "www.$DOMAIN"
+  -d "$DOMAIN"
 
 echo ""
 echo "=== Certificate obtained! ==="
@@ -1237,16 +1245,16 @@ echo "  3. Reload: docker compose exec nginx nginx -s reload"
 ```bash
 #!/usr/bin/env bash
 # Usage: bash scripts/backup.sh [--s3]
-# Schedule: 0 2 * * * /opt/zorvyn/scripts/backup.sh >> /var/log/zorvyn/backup.log 2>&1
+# Schedule: 0 2 * * * /opt/docker-setup-node/scripts/backup.sh >> /var/log/setup-doc/backup.log 2>&1
 # NOTE: Requires pg_dump installed on host: sudo apt install -y postgresql-client
 set -euo pipefail
 
-APP_DIR="/opt/zorvyn"
+APP_DIR="/opt/docker-setup-node"
 BACKUP_DIR="$APP_DIR/backups"
 RETENTION_DAYS=7
 
 TIMESTAMP=$(date -u '+%Y%m%d_%H%M%S')
-BACKUP_FILE="$BACKUP_DIR/zorvyn_${TIMESTAMP}.sql.gz"
+BACKUP_FILE="$BACKUP_DIR/setup_doc_${TIMESTAMP}.sql.gz"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -1268,7 +1276,7 @@ if [[ "${1:-}" == "--s3" ]] && [[ -n "${S3_BUCKET:-}" ]]; then
 fi
 
 # Prune old backups
-find "$BACKUP_DIR" -name "zorvyn_*.sql.gz" -mtime +"$RETENTION_DAYS" -delete
+find "$BACKUP_DIR" -name "setup_doc_*.sql.gz" -mtime +"$RETENTION_DAYS" -delete
 echo "[$(date -u)] Backup complete"
 ```
 
@@ -1380,7 +1388,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          port: 2222
+          port: 22
           command_timeout: 10m
           script: |
             cd ${{ secrets.DEPLOY_DIR }}
@@ -1414,7 +1422,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          port: 2222
+          port: 22
           script: |
             cd ${{ secrets.DEPLOY_DIR }}
             bash scripts/rollback.sh
@@ -1429,7 +1437,7 @@ Go to: Repository > Settings > Secrets and variables > Actions > New repository 
 | `EC2_HOST`    | Your Elastic IP or domain                  | `52.1.2.3`          |
 | `EC2_USER`    | SSH username                               | `ubuntu`            |
 | `EC2_SSH_KEY` | Contents of your `.pem` file (entire file) | `-----BEGIN RSA...` |
-| `DEPLOY_DIR`  | App directory on EC2                       | `/opt/zorvyn`       |
+| `DEPLOY_DIR`  | App directory on EC2                       | `/opt/docker-setup-node` |
 
 Also create a GitHub Environment called `production` (Settings > Environments) and add a required reviewer for the manual approval gate.
 
@@ -1440,7 +1448,7 @@ Also create a GitHub Environment called `production` (Settings > Environments) a
 Create `Makefile` in your project root:
 
 ```makefile
-# Zorvyn Operations — run from /opt/zorvyn on EC2
+# Operations — run from /opt/docker-setup-node on EC2
 COMPOSE := docker compose
 
 .PHONY: help
@@ -1454,7 +1462,7 @@ help:
 	@echo "  logs        Follow all logs"
 	@echo "  logs-app    Follow app logs"
 	@echo "  shell       Shell into app container"
-	@echo "  db-shell    PostgreSQL shell"
+	@echo "  db-shell    Connect to external DB"
 	@echo "  migrate     Run pending migrations"
 	@echo "  seed        Seed database"
 	@echo "  backup      Backup database"
@@ -1484,7 +1492,7 @@ logs-app:
 
 .PHONY: shell db-shell
 shell:
-	docker exec -it zorvyn_app /bin/sh
+	docker exec -it setup_doc_app /bin/sh
 
 db-shell:
 	@echo "Using external DB — connect via: psql \$DATABASE_URL"
@@ -1524,21 +1532,21 @@ clean:
 ```bash
 # Add to crontab (crontab -e)
 # Daily backup at 2 AM UTC
-0 2 * * * /opt/zorvyn/scripts/backup.sh >> /var/log/zorvyn/backup.log 2>&1
+0 2 * * * /opt/docker-setup-node/scripts/backup.sh >> /var/log/setup-doc/backup.log 2>&1
 
 # Weekly backup to S3 (Sundays at 3 AM)
-0 3 * * 0 /opt/zorvyn/scripts/backup.sh --s3 >> /var/log/zorvyn/backup.log 2>&1
+0 3 * * 0 /opt/docker-setup-node/scripts/backup.sh --s3 >> /var/log/setup-doc/backup.log 2>&1
 ```
 
 ### Restore from Backup
 
 ```bash
 # List available backups
-ls -lh /opt/zorvyn/backups/
+ls -lh /opt/docker-setup-node/backups/
 
 # Restore to external database (WARNING: overwrites data)
 # Requires pg_dump installed on host: sudo apt install -y postgresql-client
-gunzip -c /opt/zorvyn/backups/zorvyn_20260409_020000.sql.gz \
+gunzip -c /opt/docker-setup-node/backups/setup_doc_20260409_020000.sql.gz \
   | psql "$DATABASE_URL"
 ```
 
@@ -1559,7 +1567,7 @@ docker compose logs -f app
 docker compose logs app | grep '"level":"error"' | tail -20
 
 # Check container health status
-docker inspect zorvyn_app --format='{{.State.Health.Status}}'
+docker inspect setup_doc_app --format='{{.State.Health.Status}}'
 
 # Resource usage
 docker stats --no-stream
@@ -1584,12 +1592,12 @@ fi
 
 ```bash
 # Add to crontab — check every 30 minutes
-*/30 * * * * /opt/zorvyn/scripts/disk-alert.sh >> /var/log/zorvyn/disk.log 2>&1
+*/30 * * * * /opt/docker-setup-node/scripts/disk-alert.sh >> /var/log/setup-doc/disk.log 2>&1
 ```
 
 ### External Monitoring
 
-Use [UptimeRobot](https://uptimerobot.com) (free, 50 monitors, 5-min intervals). Point it at `https://yourdomain.com/health`. It catches problems internal checks miss (NGINX down, EC2 unreachable, DNS failure).
+Use [UptimeRobot](https://uptimerobot.com) (free, 50 monitors, 5-min intervals). Point it at `https://setup-doc.schbanglabs.com/health`. It catches problems internal checks miss (NGINX down, EC2 unreachable, DNS failure).
 
 ---
 
@@ -1735,12 +1743,12 @@ docker compose up --build
 ```bash
 # On EC2:
 sudo bash scripts/setup.sh
-git clone https://github.com/you/zorvyn.git /opt/zorvyn
-cd /opt/zorvyn
+git clone https://github.com/Shreyas1015/docker-setup-node.git /opt/docker-setup-node
+cd /opt/docker-setup-node
 cp .env.example .env
 nano .env                              # Fill in real values
 docker compose up -d                   # Start everything
-bash scripts/ssl-init.sh yourdomain.com you@email.com
+bash scripts/ssl-init.sh setup-doc.schbanglabs.com your@email.com
 # Update nginx config to Phase 2 HTTPS
 docker compose exec nginx nginx -t
 docker compose exec nginx nginx -s reload
@@ -1763,7 +1771,7 @@ make clean           # Clean up old images
 ```bash
 # View what's wrong
 docker compose logs --tail=50 app
-docker inspect zorvyn_app --format='{{.State.Health.Status}}'
+docker inspect setup_doc_app --format='{{.State.Health.Status}}'
 
 # Restart everything
 docker compose down && docker compose up -d
@@ -1775,7 +1783,7 @@ bash scripts/rollback.sh
 bash scripts/rollback.sh main-abc1234
 
 # Restore database from backup (external DB)
-gunzip -c backups/zorvyn_20260409.sql.gz | psql "$DATABASE_URL"
+gunzip -c backups/setup_doc_20260409.sql.gz | psql "$DATABASE_URL"
 ```
 
 ### Project File Structure
